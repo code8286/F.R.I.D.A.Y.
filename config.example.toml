@@ -1,0 +1,30 @@
+# F.R.I.D.A.Y. configuration (written on first run; config.example.toml in the repo is identical).
+# Restart FRIDAY after editing. Secrets never go here: use `friday set-secret <name>`.
+
+[provider]
+kind        = "echo"                    # "echo" = offline; "friday" = use the gateway below
+base_url    = "http://localhost:20128"  # local OmniRoute gateway (its dashboard is /home; the API is under /v1)
+path        = "/v1/chat/completions"
+model       = "auto/best-reasoning"     # or "friday" after you create a combo with that name in OmniRoute
+codec       = "openai"                  # "openai" | "messages" | "text"
+tool_mode   = "auto"                    # "auto" | "native" | "json" (the gateway supports native tool calls)
+auth_scheme = "bearer"                  # "bearer" | "header" | "query" | "none"
+secret_name = "friday_api_key"          # keyring entry holding the key: friday set-secret friday_api_key
+timeout_s   = 120                       # per model call; reasoning models can think for a while
+max_tokens  = 4096                      # reasoning tokens count against this
+
+[memory]                                # built-in long-term memory + context window (no external service)
+enabled       = true
+use_model     = true                    # model-assisted summaries + fact extraction; false = offline patterns only
+auto_extract  = true                    # learn durable facts/preferences from your own messages
+recall_k      = 6                       # memories injected per turn
+restore_turns = 6                       # recent exchanges restored after a restart
+
+[security]
+confirm_ttl_s               = 60        # seconds an approval request stays valid
+allowed_telegram_ids        = []        # your numeric Telegram user id(s); everyone else is ignored
+voice_t3_requires_challenge = true      # keep true: a spoken "yes" never approves a T3 action
+
+[conversation]
+user_name = "Alpha"
+timezone  = "Asia/Kolkata"

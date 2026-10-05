@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.ruff_cache/
+
+# FRIDAY runtime data (never commit: contains your memory, audit log and local tokens)
+*.db
+*.db-wal
+*.db-shm
+ws_token
+config.toml
+config.local.toml
+
+# Secrets
+.env
+credentials.json
+token.json

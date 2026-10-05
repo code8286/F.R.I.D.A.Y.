@@ -1,0 +1,7 @@
+F.R.I.D.A.Y.
+Copyright 2026 Alpha (code8286)
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Tranche 1 has no third-party runtime dependencies: it uses only the Python standard library.
+The optional "keyring" extra (MIT License) is installed separately and is not bundled.

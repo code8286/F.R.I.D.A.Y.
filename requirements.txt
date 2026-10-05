@@ -1,0 +1,6 @@
+# Tranche 1 runs on the Python standard library alone (Python 3.10+; 3.11+ recommended).
+# Recommended: the OS keyring for secrets (model API key, audit HMAC key; Telegram/GitHub tokens later).
+keyring>=24
+# Later tranches add their own dependencies when they land:
+#   tranche 3 (sensors + voice): sounddevice, numpy, vosk, faster-whisper
+#   tranche 4 (UI):               PySide6, websockets

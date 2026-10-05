@@ -1,0 +1,4 @@
+include LICENSE NOTICE README.md CHANGELOG.md SECURITY.md CONTRIBUTING.md config.example.toml requirements.txt
+recursive-include docs *.md
+recursive-include tests *.py
+global-exclude __pycache__ *.py[cod] *.db *.db-wal *.db-shm

@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "friday-assistant"
+dynamic = ["version"]
+description = "F.R.I.D.A.Y. — standalone 24x7 desktop assistant: headless core, security model and built-in memory (tranche 1)"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Alpha (code8286)" }]
+requires-python = ">=3.10"
+dependencies = []                       # tranche 1 runs on the standard library alone
+keywords = ["assistant", "agent", "llm", "desktop", "security"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Desktop Environment",
+]
+
+[project.optional-dependencies]
+secrets = ["keyring>=24"]               # OS keyring (Windows Credential Manager, macOS Keychain, Secret Service)
+
+[project.scripts]
+friday = "friday.__main__:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "friday.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["friday*"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 140
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP", "I"]
+ignore = ["E501", "E731"]
