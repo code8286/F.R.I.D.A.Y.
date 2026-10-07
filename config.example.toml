@@ -24,6 +24,32 @@ restore_turns = 6                       # recent exchanges restored after a rest
 confirm_ttl_s               = 60        # seconds an approval request stays valid
 allowed_telegram_ids        = []        # your numeric Telegram user id(s); everyone else is ignored
 voice_t3_requires_challenge = true      # keep true: a spoken "yes" never approves a T3 action
+fs_roots                    = ["~"]     # folders the file tools may reach; anything outside needs a T3 approval, even to read
+                                        # (the denylist for keys, browser profiles, .env files etc. always needs T3 as well)
+
+[tools]                                 # turn a group off to remove its tools completely
+tasks     = true
+notes     = true
+reminders = true                        # alarms and reminders, plus the scheduler that fires them
+fs        = true                        # fs_list / fs_read / fs_search / fs_write / fs_edit / fs_move / fs_delete / fs_undo
+shell     = true                        # shell_run: every call needs your approval
+web       = true                        # web_fetch: every call needs your approval
+trash_retention_days = 30               # deleted files stay recoverable (fs_undo) for at least this long
+
+[voice]                                 # microphone + speech (tranche 3). Off until you enable it: see docs/DEPLOYMENT.md section 7
+enabled      = false                    # voice is on-demand: `friday run` is text chat; `friday run --voice` or /voice on starts it
+input_device  = ""                      # "" = default microphone; or an index / name part (friday audio-devices)
+output_device = ""
+activation   = "either"                 # "either" | "both" | "clap" | "wake": what opens a listening window
+wake_phrases = ["friday wake up"]
+stop_phrases = ["stop", "friday stop"]  # used when barge_in is "stop" or "any"
+barge_in     = "off"                    # "off" | "stop" | "any": can the mic cut FRIDAY off mid-speech? off = never (use headphones before changing)
+session_idle_s = 20                     # the listening window closes after this many quiet seconds
+greeting     = "Yes, {name}?"
+tts_engine   = "elevenlabs"             # "elevenlabs" (falls back to the system voice) | "local" | "none"
+elevenlabs_voice_id = ""                # your voice id; the API key goes in the keyring: friday set-secret elevenlabs_api_key
+speak_reminders = true
+# Models are never downloaded by the running core. Fetch them once with:  friday fetch-models all
 
 [conversation]
 user_name = "Alpha"

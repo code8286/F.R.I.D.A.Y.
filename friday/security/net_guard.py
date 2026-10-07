@@ -35,12 +35,30 @@ class UrlVerdict:
     ips: tuple[str, ...] = ()
 
 
+_V6_EMBEDDED_V4 = (
+    ipaddress.ip_network("::/96"),             # IPv4-compatible
+    ipaddress.ip_network("64:ff9b::/96"),      # NAT64
+    ipaddress.ip_network("::ffff:0:0:0/96"),   # SIIT
+)
+_V6_BLOCKED = (
+    ipaddress.ip_network("fec0::/10"),         # deprecated site-local
+    ipaddress.ip_network("64:ff9b:1::/48"),    # local-use NAT64
+    ipaddress.ip_network("100::/64"),          # discard-only
+)
+
+
 def _ip_ok(ip: ipaddress._BaseAddress) -> bool:
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
-    if isinstance(ip, ipaddress.IPv6Address) and ip.sixtofour is not None:
-        if not _ip_ok(ip.sixtofour):
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            return _ip_ok(ip.ipv4_mapped)
+        if ip.sixtofour is not None and not _ip_ok(ip.sixtofour):
             return False
+        if ip.teredo is not None and not all(_ip_ok(x) for x in ip.teredo):
+            return False
+        if any(ip in net for net in _V6_BLOCKED):
+            return False
+        if any(ip in net for net in _V6_EMBEDDED_V4):
+            return _ip_ok(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))   # judge the IPv4 address hidden inside
     return ip.is_global and not ip.is_multicast
 
 
@@ -60,7 +78,11 @@ def check_url(
     *,
     resolver: Resolver | None = None,
     allow_private: bool = False,
+    resolve: bool = True,
 ) -> UrlVerdict:
+    """Validate a URL. With ``resolve=False`` only syntax, scheme, IP literals and internal names are checked and no DNS
+    lookup happens (the policy engine uses this: a lookup before approval would leak data in the hostname and block the
+    event loop). The fetch itself resolves, re-checks every address and pins the connection."""
     if not isinstance(url, str) or not url.strip() or any(c in url for c in "\x00\r\n\t "):
         return UrlVerdict(False, "malformed URL")
     try:
@@ -88,9 +110,11 @@ def check_url(
             host.encode("idna")
         except UnicodeError:
             return UrlVerdict(False, "invalid hostname")
-        resolve = resolver or socket.getaddrinfo
+        if not resolve:
+            return UrlVerdict(True, "", url.strip(), host, port, ())
+        resolve_fn = resolver or socket.getaddrinfo
         try:
-            infos = resolve(host, port or (443 if parts.scheme == "https" else 80), type=socket.SOCK_STREAM)
+            infos = resolve_fn(host, port or (443 if parts.scheme == "https" else 80), type=socket.SOCK_STREAM)
         except (socket.gaierror, OSError) as exc:
             return UrlVerdict(False, f"cannot resolve host: {exc}")
         for info in infos:

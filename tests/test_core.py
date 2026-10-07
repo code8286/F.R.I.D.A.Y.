@@ -11,7 +11,7 @@ from friday.brain.messages import Message, TextBlock, ToolResultBlock, ToolUseBl
 from friday.core.audit import AuditLog
 from friday.core.bus import EventBus
 from friday.core.config import DEFAULT_CONFIG_TOML, SecurityConfig, load_config
-from friday.core.db import Database
+from friday.core.db import MIGRATIONS, Database
 from friday.core.errors import AdmissionError, ConfigError, KillSwitchTripped, StorageError
 from friday.core.killswitch import KillSwitch
 from friday.core.schema import check_schema, validate
@@ -79,7 +79,7 @@ class DbTests(TempDirCase):
     def test_wal_migrations_and_kv(self):
         db = Database(self.tmp / "x.db").open()
         self.assertEqual(db.scalar("PRAGMA journal_mode").lower(), "wal")
-        self.assertEqual(db.scalar("PRAGMA user_version"), 2)
+        self.assertEqual(db.scalar("PRAGMA user_version"), len(MIGRATIONS))
         db.kv_set("a", "1", 1.0)
         db.kv_set("a", "2", 2.0)
         self.assertEqual(db.kv_get("a"), "2")

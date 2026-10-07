@@ -37,13 +37,17 @@ from ..core.audit import AuditLog
 from ..core.bus import EventBus
 from ..core.config import SecurityConfig
 from ..core.errors import ConfirmationError
-from .card import args_hash, render_card
+from .card import args_hash, build_readback, render_card
 from .policy import Decision
 from .tiers import ConfirmChannel, RiskTier
 
 _WORDS = ["amber", "anchor", "apple", "arrow", "aspen", "badger", "basil", "beacon", "birch", "bison", "bolt", "breeze", "bronze", "cedar", "clover", "cobalt", "comet", "copper", "coral", "crane", "crimson", "dawn", "delta", "dune", "eagle", "ember", "falcon", "fern", "flint", "forest", "frost", "garnet", "glacier", "granite", "harbor", "hazel", "heron", "indigo", "iris", "ivory", "jade", "jasper", "juniper", "kestrel", "lagoon", "lantern", "lark", "lotus", "maple", "marble", "meadow", "meteor", "mist", "nectar", "nickel", "oak", "onyx", "orchid", "otter", "pearl", "pine", "plume", "quartz", "raven", "reef", "ridge", "river", "saffron", "sage", "silver", "sparrow", "summit", "thistle", "thunder", "topaz", "tundra", "velvet", "willow"]
 
 _YES = {"yes", "y", "approve", "approved", "confirm"}
+# A spoken approval must be a short, clean "yes". Anything with a refusal word in it, or a long sentence that merely
+# contains "yes" (a TV, a call, a recording), is not an approval.
+_NO = {"no", "nope", "nah", "cancel", "stop", "deny", "denied", "negative", "don't", "dont", "not", "abort", "wait", "never", "decline"}
+MAX_SPOKEN_YES_WORDS = 5
 
 
 class ApprovalState(str, Enum):
@@ -63,6 +67,9 @@ class ApprovalRequest:
     tier: RiskTier
     reasons: tuple[str, ...]
     card: str
+    readback: str
+    readback_complete: bool
+    origin: str
     args_hash: str
     short_code: str
     challenge: str | None
@@ -80,6 +87,9 @@ class ApprovalRequest:
             "tier": int(self.tier),
             "reasons": list(self.reasons),
             "card": self.card,
+            "readback": self.readback,
+            "readback_complete": self.readback_complete,
+            "origin": self.origin,
             "short_code": self.short_code,
             "challenge": self.challenge,
             "ttl_s": self.expires_at - self.created_at,
@@ -115,7 +125,7 @@ class ConfirmationBroker:
         self._reqs: dict[str, ApprovalRequest] = {}
 
     # ------------------------------------------------------------------ create / wait
-    def create(self, *, session_id: str, tool: str, args: dict[str, Any], decision: Decision) -> ApprovalRequest:
+    def create(self, *, session_id: str, tool: str, args: dict[str, Any], decision: Decision, origin: str = "") -> ApprovalRequest:
         self._expire_due()
         pending = [r for r in self._reqs.values() if r.state is ApprovalState.PENDING]
         if len(pending) >= self.cfg.max_pending_approvals:
@@ -126,6 +136,7 @@ class ConfirmationBroker:
         challenge = None
         if decision.tier >= RiskTier.T3:
             challenge = " ".join(secrets.choice(_WORDS) for _ in range(3))
+        readback, readback_complete = build_readback(tool, args, decision, self._redact)
         req = ApprovalRequest(
             id=secrets.token_hex(4),
             session_id=session_id,
@@ -133,6 +144,9 @@ class ConfirmationBroker:
             tier=decision.tier,
             reasons=decision.reasons,
             card=render_card(tool, args, decision, self._redact),
+            readback=readback,
+            readback_complete=readback_complete,
+            origin=origin,
             args_hash=args_hash(tool, args),
             short_code=f"{secrets.randbelow(10000):04d}",
             challenge=challenge,
@@ -223,9 +237,15 @@ class ConfirmationBroker:
                 if want and _contains_sequence(spoken, want):
                     return True, ""
                 return False, "say the challenge phrase shown on screen to approve a T3 action"
-            if self.cfg.voice_t2_requires_readback and not readback_confirmed:
-                return False, "voice approval needs a readback of the action first"
-            spoken = set(_norm_words(text or ""))
+            if self.cfg.voice_t2_requires_readback:
+                if not req.readback_complete:
+                    return False, "this action is too long or detailed to approve by ear; approve it on screen"
+                if not readback_confirmed:
+                    return False, "voice approval needs a readback of the action first"
+            spoken_words = _norm_words(text or "")
+            spoken = set(spoken_words)
+            if spoken & _NO or len(spoken_words) > MAX_SPOKEN_YES_WORDS:
+                return False, "say just 'yes' to approve"
             if spoken & _YES:
                 return True, ""
             return False, "say 'yes' to approve"

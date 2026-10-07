@@ -158,3 +158,38 @@ async def make_rig(tmp: Path, script: list[Any], mutate: Callable[[Config], None
 
     core.loop._sleep = fake_sleep
     return rig
+
+
+async def make_tools_core(tmp: Path, script: list[Any], files: Path | None = None, mutate: Callable[[Config], None] | None = None, **kw: Any) -> Rig:
+    """A FridayCore with the REAL default tool set (tranche 2) and a scripted model. `files` is the allowed user folder."""
+    cfg = make_cfg(tmp)
+    if files is not None:
+        cfg.security.fs_roots = [str(files)]
+    cfg.security.global_rate_per_min = 10000
+    if mutate:
+        mutate(cfg)
+    provider = ScriptedProvider(script)
+    core = FridayCore(cfg, provider=provider, secrets=SecretStore(MemoryBackend()), **kw)
+    await core.start()
+    rig = Rig(core, provider, [])
+
+    async def fake_sleep(d: float) -> None:
+        rig.slept.append(d)
+
+    core.loop._sleep = fake_sleep
+    return rig
+
+
+def tool_results(core: FridayCore) -> list[Any]:
+    return [b for m in core.sessions.main().history for b in m.tool_results()]
+
+
+async def run_tool(rig: Rig, name: str, args: dict[str, Any] | None = None, approve: bool | None = True) -> Any:
+    """Script one tool call + a final answer, run a turn, return the tool result block (approvals auto-answered)."""
+    rig.provider.script.extend([calls(use(name, args or {})), say("done")])
+    if approve is not None:
+        rig.auto_respond(approve)
+    before = len(tool_results(rig.core))
+    await rig.core.submit(f"run {name}")
+    rs = tool_results(rig.core)
+    return rs[before]

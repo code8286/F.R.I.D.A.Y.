@@ -1,0 +1,4 @@
+PySide6>=6.7
+# optional, only for --mock-mic (the UI opening the microphone for visual tuning):
+# sounddevice>=0.4.6
+# numpy>=1.24

@@ -30,6 +30,7 @@ class ToolContext:
     source: str                 # "console" | "ui" | "voice" | "telegram" ...
     tainted: bool = False
     services: Any = None        # FridayCore (db, bus, config, ...) — set by the loop
+    resolved_paths: tuple[str, ...] = ()   # paths the policy engine resolved and approved, in path_params order
 
 
 @dataclass
@@ -53,6 +54,7 @@ class ToolSpec:
     side_effecting: bool | None = None          # default: tier >= T1
     output_trust: Trust = Trust.TRUSTED         # UNTRUSTED -> enveloped + taints the turn
     summarize_output: bool = False              # large untrusted blobs go through the quarantined summarizer
+    summarize_over: int | None = None           # raw-output threshold for untrusted text (default: [agent] summarize_untrusted_over_chars)
     timeout_s: float | None = None
     path_params: tuple[str, ...] = ()
     path_op: str = "read"
@@ -61,6 +63,7 @@ class ToolSpec:
     rate_limit_per_min: int = 0
     classifier: Classifier | None = None        # may only ESCALATE the tier
     touches_credentials: bool = False           # forces T3
+    errors_untrusted: bool = False              # error text can carry remote strings: envelope it as data and taint the turn
 
     @property
     def is_side_effecting(self) -> bool:

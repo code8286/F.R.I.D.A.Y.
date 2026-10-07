@@ -16,6 +16,7 @@ Memory is built in (``[memory]``). A leftover ``[hermes]`` section from older co
 
 from __future__ import annotations
 
+import math
 import os
 import sys
 from dataclasses import dataclass, field, fields
@@ -107,6 +108,75 @@ class SecurityConfig:
     voice_t2_requires_readback: bool = True
     voice_t3_requires_challenge: bool = True  # loosen at your own risk (see Architecture §6)
     allow_private_net: bool = False    # NEVER enable unless you know why (SSRF)
+    fs_roots: list[str] = field(default_factory=lambda: ["~"])   # folders the file tools may reach; outside them everything is T3
+
+
+@dataclass
+class ToolsConfig:
+    tasks: bool = True                 # task list
+    notes: bool = True                 # notes
+    reminders: bool = True             # alarms / reminders + the scheduler
+    fs: bool = True                    # filesystem tools
+    shell: bool = True                 # shell tool (every call needs approval)
+    web: bool = True                   # web fetch (every call needs approval)
+    fs_read_max_bytes: int = 12000     # bytes fs_read returns per call (page through bigger files with offset)
+    fs_write_max_bytes: int = 1048576  # largest file fs_write / fs_edit produce
+    shell_timeout_max_s: int = 120
+    shell_output_max_chars: int = 12000
+    web_max_bytes: int = 2000000       # response bytes read per fetch
+    web_timeout_s: float = 20.0
+    trash_retention_days: int = 30     # deleted files stay recoverable (fs_undo) at least this long
+    max_pending_reminders: int = 200
+
+
+@dataclass
+class VoiceConfig:
+    """Tranche 3: microphone, activation, speech in/out. Off by default: nothing listens until you turn it on."""
+
+    enabled: bool = False
+    # devices ("" = system default; or a device index / part of its name, see `friday audio-devices`)
+    input_device: str = ""
+    output_device: str = ""
+    # activation
+    activation: str = "either"            # "either" | "both" | "clap" | "wake"
+    activation_debounce_s: float = 3.0
+    both_window_s: float = 4.0            # for activation = "both": clap and phrase within this many seconds
+    wake_phrases: list[str] = field(default_factory=lambda: ["friday wake up"])
+    stop_phrases: list[str] = field(default_factory=lambda: ["stop", "friday stop"])   # spoken barge-in: stops FRIDAY talking
+    wake_model: str = ""                  # Vosk model folder ("" = <data>/models/vosk-model-small-en-us-0.15)
+    clap_spike_ratio: float = 7.0
+    clap_min_rms: float = 0.012
+    clap_max_gap_s: float = 0.35
+    # voice session
+    session_idle_s: float = 20.0          # the listening window closes after this long without speech or activity
+    greeting: str = "Yes, {name}?"
+    echo_guard_ms: int = 700              # recorder stays off this long after FRIDAY stops speaking
+    # Can the microphone cut FRIDAY off while she is talking? "off" (default): never, her own voice in the mic cannot
+    # interrupt her (stop her with the UI, the kill switch or Esc); "stop": only a spoken stop phrase; "any": stop phrase, clap or wake phrase.
+    # Use "stop" or "any" with headphones, or speakers that do not feed back into the microphone.
+    barge_in: str = "off"
+    vad_min_rms: float = 0.008
+    vad_silence_ms: int = 700
+    max_utterance_s: float = 15.0
+    # speech to text (local faster-whisper)
+    stt_model: str = ""                   # model folder ("" = <data>/models/faster-whisper-<stt_model_size>)
+    stt_model_size: str = "small.en"      # used by `friday fetch-models whisper`
+    stt_language: str = "en"
+    stt_device: str = "auto"
+    stt_compute_type: str = "int8"
+    # text to speech
+    tts_engine: str = "elevenlabs"        # "elevenlabs" (falls back to the system voice) | "local" | "none"
+    elevenlabs_voice_id: str = ""
+    elevenlabs_model: str = "eleven_multilingual_v2"
+    elevenlabs_format: str = "pcm_24000"
+    elevenlabs_secret: str = "elevenlabs_api_key"   # keyring entry: friday set-secret elevenlabs_api_key
+    tts_cache: bool = True                # cache short fixed phrases (greeting, acknowledgements) only
+    tts_cache_max_mb: int = 50
+    max_spoken_chars: int = 2500          # replies are spoken in full up to this size (a longer one is cut at a sentence; the rest stays on screen)
+    speak_reminders: bool = True
+    # `friday fetch-models vosk`
+    vosk_model_url: str = "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
+    vosk_model_sha256: str = ""           # pin the download's SHA-256 here; empty = print it and trust TLS only
 
 
 @dataclass
@@ -122,6 +192,8 @@ class Config:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
+    tools: ToolsConfig = field(default_factory=ToolsConfig)
+    voice: VoiceConfig = field(default_factory=VoiceConfig)
     conversation: ConversationConfig = field(default_factory=ConversationConfig)
     config_path: Path | None = None
     notes: list[str] = field(default_factory=list)   # non-fatal load notices (shown at startup)
@@ -150,6 +222,8 @@ _SECTIONS = {
     "memory": MemoryConfig,
     "agent": AgentConfig,
     "security": SecurityConfig,
+    "tools": ToolsConfig,
+    "voice": VoiceConfig,
     "conversation": ConversationConfig,
 }
 
@@ -183,6 +257,9 @@ _VALID = {
     ("provider", "codec"): {"openai", "messages", "text"},
     ("provider", "tool_mode"): {"auto", "native", "json"},
     ("provider", "auth_scheme"): {"bearer", "header", "query", "none"},
+    ("voice", "activation"): {"either", "both", "clap", "wake"},
+    ("voice", "tts_engine"): {"elevenlabs", "local", "none"},
+    ("voice", "barge_in"): {"off", "stop", "any"},
 }
 
 
@@ -198,6 +275,23 @@ def _validate(cfg: Config) -> None:
     m = cfg.memory
     if m.recall_k < 0 or m.max_fact_chars < 20 or m.summary_max_chars < 100 or m.restore_turns < 0 or m.max_memories < 10:
         raise ConfigError("[memory] values out of range")
+    t = cfg.tools
+    if (t.fs_read_max_bytes < 1024 or t.fs_write_max_bytes < 1024 or t.shell_timeout_max_s < 1 or t.shell_output_max_chars < 200
+            or t.web_max_bytes < 1024 or t.web_timeout_s <= 0 or t.trash_retention_days < 1 or t.max_pending_reminders < 1):
+        raise ConfigError("[tools] values out of range")
+    if not all(isinstance(r, str) and r.strip() for r in cfg.security.fs_roots):
+        raise ConfigError("[security] fs_roots must be a list of folder paths")
+    v = cfg.voice
+    if not all(math.isfinite(getattr(v, f.name)) for f in fields(v) if isinstance(getattr(v, f.name), float)):
+        raise ConfigError("[voice] numbers must be finite (no nan or inf)")
+    if (v.activation_debounce_s < 0 or v.both_window_s <= 0 or v.session_idle_s < 3 or v.echo_guard_ms < 0 or v.vad_silence_ms < 200
+            or v.max_utterance_s < 2 or v.max_spoken_chars < 80 or v.tts_cache_max_mb < 1 or v.clap_spike_ratio <= 1
+            or not 0 < v.clap_min_rms < 1 or not 0.05 <= v.clap_max_gap_s <= 1.0 or not 0 < v.vad_min_rms < 1):
+        raise ConfigError("[voice] values out of range")
+    if not all(isinstance(p, str) and p.strip() for p in (*v.wake_phrases, *v.stop_phrases)) or not v.wake_phrases:
+        raise ConfigError("[voice] wake_phrases / stop_phrases must be lists of non-empty phrases (and wake_phrases cannot be empty)")
+    if v.stt_model_size and not all(c.isalnum() or c in ".-_" for c in v.stt_model_size):
+        raise ConfigError("[voice] stt_model_size may only contain letters, digits and . - _")
     if cfg.provider.kind == "friday" and not cfg.provider.base_url:
         raise ConfigError("[provider] kind='friday' requires base_url")
 
@@ -273,6 +367,32 @@ restore_turns = 6                       # recent exchanges restored after a rest
 confirm_ttl_s               = 60        # seconds an approval request stays valid
 allowed_telegram_ids        = []        # your numeric Telegram user id(s); everyone else is ignored
 voice_t3_requires_challenge = true      # keep true: a spoken "yes" never approves a T3 action
+fs_roots                    = ["~"]     # folders the file tools may reach; anything outside needs a T3 approval, even to read
+                                        # (the denylist for keys, browser profiles, .env files etc. always needs T3 as well)
+
+[tools]                                 # turn a group off to remove its tools completely
+tasks     = true
+notes     = true
+reminders = true                        # alarms and reminders, plus the scheduler that fires them
+fs        = true                        # fs_list / fs_read / fs_search / fs_write / fs_edit / fs_move / fs_delete / fs_undo
+shell     = true                        # shell_run: every call needs your approval
+web       = true                        # web_fetch: every call needs your approval
+trash_retention_days = 30               # deleted files stay recoverable (fs_undo) for at least this long
+
+[voice]                                 # microphone + speech (tranche 3). Off until you enable it: see docs/DEPLOYMENT.md section 7
+enabled      = false                    # voice is on-demand: `friday run` is text chat; `friday run --voice` or /voice on starts it
+input_device  = ""                      # "" = default microphone; or an index / name part (friday audio-devices)
+output_device = ""
+activation   = "either"                 # "either" | "both" | "clap" | "wake": what opens a listening window
+wake_phrases = ["friday wake up"]
+stop_phrases = ["stop", "friday stop"]  # used when barge_in is "stop" or "any"
+barge_in     = "off"                    # "off" | "stop" | "any": can the mic cut FRIDAY off mid-speech? off = never (use headphones before changing)
+session_idle_s = 20                     # the listening window closes after this many quiet seconds
+greeting     = "Yes, {name}?"
+tts_engine   = "elevenlabs"             # "elevenlabs" (falls back to the system voice) | "local" | "none"
+elevenlabs_voice_id = ""                # your voice id; the API key goes in the keyring: friday set-secret elevenlabs_api_key
+speak_reminders = true
+# Models are never downloaded by the running core. Fetch them once with:  friday fetch-models all
 
 [conversation]
 user_name = "Alpha"

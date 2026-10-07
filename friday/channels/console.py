@@ -6,7 +6,8 @@
 Type a message to talk to FRIDAY. When an approval is pending, your next line answers it:
     yes / y        approve a T2 action          <4-digit code>   approve a T3 action
     no  / n        deny
-Commands:  /pending  /kill  /reset  /audit  /help  /exit
+Commands:  /voice [on|off]  /pending  /kill  /reset  /audit  /help  /exit
+(Voice is off until you ask: /voice on, or start with `friday run --voice`.)
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import threading
 from typing import Any
 
 from ..core.daemon import FridayCore
+from ..security.card import sanitize_display
 from ..security.tiers import ConfirmChannel
 
 HELP = __doc__
@@ -56,6 +58,8 @@ class ConsoleChannel:
                 self._print(p["card"])
                 if p["tier"] >= 3:
                     self._print(f"T3 action: type the code {p['short_code']} to approve, or 'no' to deny.")
+                    if p.get("challenge"):
+                        self._print(f"By voice, say this phrase (it is never spoken aloud): {p['challenge']}")
                 else:
                     self._print("Approve? yes / no")
                 self._print(f"(expires in {p['ttl_s']:.0f}s)")
@@ -68,6 +72,28 @@ class ConsoleChannel:
         try:
             async for ev in sub:
                 self._print(f"[warning] {ev.payload.get('message')}")
+        finally:
+            sub.close()
+
+    async def _present_voice(self) -> None:
+        sub = self.core.bus.subscribe("voice.*")
+        try:
+            async for ev in sub:
+                if ev.topic == "voice.heard":
+                    self._print(f"[voice] heard: {sanitize_display(str(ev.payload.get('text', '')))}")
+                elif ev.topic == "voice.state":
+                    self._print(f"[voice] {ev.payload.get('state')}")
+        finally:
+            sub.close()
+
+    async def _present_reminders(self) -> None:
+        sub = self.core.bus.subscribe("reminder.due")
+        try:
+            async for ev in sub:
+                p = ev.payload
+                late = " (missed while FRIDAY was off)" if p.get("late") else ""
+                self._print("")
+                self._print(f"[reminder #{p['id']}{late}] {sanitize_display(str(p['message']))}")
         finally:
             sub.close()
 
@@ -95,7 +121,8 @@ class ConsoleChannel:
     async def run(self) -> None:
         loop = asyncio.get_running_loop()
         self._start_reader(loop)
-        bg = [asyncio.create_task(self._present_confirmations()), asyncio.create_task(self._present_events())]
+        bg = [asyncio.create_task(self._present_confirmations()), asyncio.create_task(self._present_events()),
+              asyncio.create_task(self._present_reminders()), asyncio.create_task(self._present_voice())]
         self._print("FRIDAY online. Type /help for commands.")
         try:
             while True:
@@ -130,6 +157,14 @@ class ConsoleChannel:
         elif cmd == "/reset":
             self.core.reset_kill("console")
             self._print("[kill switch reset]")
+        elif cmd == "/voice":
+            arg = (line.split() + ["on"])[1].lower() if len(line.split()) > 1 else "status"
+            if arg == "on":
+                self._print(f"[{await self.core.start_voice()}]")
+            elif arg == "off":
+                self._print(f"[{await self.core.stop_voice()}]")
+            else:
+                self._print(f"[voice is {'on' if self.core.voice is not None else 'off'}; /voice on | /voice off]")
         elif cmd == "/pending":
             for r in self.core.broker.pending():
                 self._print(f"{r.id}  {r.tool}  T{int(r.tier)}")

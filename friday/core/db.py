@@ -82,6 +82,57 @@ MIGRATIONS: list[list[str]] = [
            )""",
         "CREATE INDEX turns_session ON turns(session_id, id)",
     ],
+    # v3 — local tools: tasks, notes, reminders (alarms), filesystem undo journal
+    [
+        """CREATE TABLE tasks (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               title TEXT NOT NULL,
+               details TEXT NOT NULL DEFAULT '',
+               status TEXT NOT NULL DEFAULT 'open',
+               priority INTEGER NOT NULL DEFAULT 2,
+               due_at REAL,
+               created_at REAL NOT NULL,
+               updated_at REAL NOT NULL,
+               completed_at REAL,
+               tainted INTEGER NOT NULL DEFAULT 0
+           )""",
+        "CREATE INDEX tasks_status ON tasks(status, due_at)",
+        """CREATE TABLE notes (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               title TEXT NOT NULL,
+               body TEXT NOT NULL,
+               tags TEXT NOT NULL DEFAULT '',
+               created_at REAL NOT NULL,
+               updated_at REAL NOT NULL,
+               tainted INTEGER NOT NULL DEFAULT 0
+           )""",
+        """CREATE TABLE reminders (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               message TEXT NOT NULL,
+               due_at REAL NOT NULL,
+               repeat TEXT NOT NULL DEFAULT 'none',
+               status TEXT NOT NULL DEFAULT 'pending',
+               task_id INTEGER,
+               created_at REAL NOT NULL,
+               fired_at REAL,
+               fire_count INTEGER NOT NULL DEFAULT 0,
+               tainted INTEGER NOT NULL DEFAULT 0
+           )""",
+        "CREATE INDEX reminders_due ON reminders(status, due_at)",
+        """CREATE TABLE fs_journal (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               op TEXT NOT NULL,
+               src TEXT NOT NULL,
+               dst TEXT NOT NULL DEFAULT '',
+               backup TEXT NOT NULL DEFAULT '',
+               is_dir INTEGER NOT NULL DEFAULT 0,
+               size INTEGER NOT NULL DEFAULT 0,
+               sig TEXT NOT NULL DEFAULT '',
+               ts REAL NOT NULL,
+               state TEXT NOT NULL DEFAULT 'active',
+               undone_at REAL
+           )""",
+    ],
 ]
 
 

@@ -8,11 +8,116 @@ while the project is pre-1.0.
 
 ## [Unreleased]
 
-### Planned (tranche 2, local tools)
-- Tasks and notes (SQLite, Markdown export), alarms and reminders with a persistent asyncio scheduler.
-- Filesystem tools that act on the resolved path, delete through the recycle bin with an undo journal.
-- Shell tool (no `shell=True`, timeout, output cap) and a web fetcher that pins requests to the IPs
-  checked by the SSRF guard.
+Nothing yet. Next: tranche 4 (the desktop UI).
+
+## [0.3.0] - 2026-10-06
+
+Tranche 3: sensors and voice. **Off by default** (`[voice] enabled = false`): nothing listens to the microphone until
+you opt in. The core is still standard library only; voice libraries are the optional `voice` extra and are imported
+lazily, so FRIDAY runs without them and says what is missing.
+
+### Added
+- **Audio hub** (`friday.sensors.audio_hub`): the single owner of the microphone (16 kHz mono, 20 ms frames), with
+  reconnect on failure or stall and a fallback from a silent default device to the loudest real input.
+- **Double-clap detector**, ported from `jarvis.py` (adaptive noise floor, retrigger arming, gap window) without the
+  once-per-process limit or hardcoded actions; claps must be short, so speech does not trigger it.
+- **Wake phrase** "FRIDAY wake up" with Vosk (grammar restricted to the wake and stop phrases), on its own thread; **stop
+  phrases** ("stop", "friday stop") cut speech off. **Activation fusion**: `either`, `both`, `clap` or `wake`, debounced.
+- **Voice activity detection** (energy endpointer with pre-roll) and **local speech-to-text** with faster-whisper
+  (model loaded from a local folder only; silence hallucinations dropped; falls back to the CPU if the GPU stack is broken).
+- **Text-to-speech**: ElevenLabs over stdlib HTTPS (key from the OS keyring, voice id in config), falling back to the system
+  voice (Windows SAPI, macOS `say`, Linux `espeak-ng`); a WAV cache for short fixed phrases only.
+- **Voice channel** (`friday.channels.voice`): a listening window opened by the clap or wake phrase (FRIDAY greets, then
+  listens; nothing is launched), half-duplex recording with barge-in, spoken replies (redacted, markdown, code and links
+  removed, long replies cut to a sentence), spoken reminders, and a kill switch that silences everything.
+- **Spoken approvals** with code-built readbacks (`render_readback` / `build_readback`): see Security below.
+- CLI: `friday audio-devices`, `friday voice-check [--seconds N] [--say TEXT]`, `friday fetch-models [vosk|whisper|all] [--force]`.
+- Config: a `[voice]` section; `pyproject.toml` gets the `voice` extra.
+- Console: shows what was heard and prints the T3 challenge phrase for you to say (never spoken).
+- 158 new tests (446 in total) using fakes for the microphone, engines, clock and network.
+
+### Security
+- Only approvals raised by a turn that arrived **by voice** (recorded as the approval's `origin`) can be answered by voice;
+  a request from a typed or scheduled turn is never read out and never voice-answerable, even with a window open.
+- T2 by voice needs a complete readback of the exact action, spoken word for word and played to the end, then a short clean
+  "yes" that began after the readback ended. An action that cannot be read in full (over four arguments, long values, nested
+  options) can only be approved on screen, and the broker enforces that too. T3 needs the on-screen challenge phrase.
+- The recorder is off while FRIDAY speaks and for a guard afterwards; claps and the wake phrase are ignored then (a clap or
+  "stop" while speaking only stops the speech).
+- The running core never downloads models. `friday fetch-models` is https only, size and time capped, refuses redirects to
+  http, supports a SHA-256 pin, unpacks safely, installs atomically, and `--force` never deletes outside the models folder.
+- Spoken text is redacted before it reaches a TTS provider; audio is not stored or logged; the ElevenLabs request goes to a
+  fixed host with no redirects and its response is capped and checked for plausible length.
+- Found by an independent pre-release review and fixed here: voice ownership of approvals, truncated or rewritten readbacks,
+  an engine crash escaping into a turn, a deaf channel after one bad frame, a half-installed model counting as installed,
+  steady noise re-triggering the recorder forever, and a few smaller items.
+
+### Notes
+- The cloud build and its tests have no microphone, speakers, Vosk, Whisper or ElevenLabs access, so the real-hardware paths
+  are covered by fakes only. Run `friday voice-check` after installing, and see `docs/DEPLOYMENT.md`, section 7.
+
+## [0.2.0] - 2026-10-06
+
+Tranche 2: local tools. Everything below sits behind the existing risk tiers, taint tracking and
+confirmation broker, and each group can be switched off under `[tools]` in `config.toml`.
+Still standard library only.
+
+### Added
+- **Tasks, notes and reminders** (`friday.personal`): SQLite-backed, with Markdown export for notes.
+  Reminders are driven by a persistent asyncio scheduler that survives restarts, marks reminders it
+  missed while the core was down as late, and repeats hourly, daily, on weekdays or weekly. A firing
+  reminder is announced on the bus and the console and written to the audit log. It never reaches the
+  model. Tools: `task_add/list/update/delete`, `note_add/list/search/read/update/delete/export`,
+  `reminder_set/list/cancel/snooze`.
+- **Filesystem tools**: `fs_list`, `fs_read`, `fs_search`, `fs_write`, `fs_edit`, `fs_move`,
+  `fs_delete`, `fs_trash_list`, `fs_undo`. Deletes go to a trash folder in the data directory
+  (purged after `trash_retention_days`, default 30), and every change is recorded in a signed undo journal.
+- **Shell tool** `shell_run`: argv only (no shell), scrubbed environment, timeout, output cap and
+  process-tree kill. A short read-only allowlist is T2; anything else is T3.
+- **Web fetcher** `web_fetch` (T2): the connection is pinned to the IP the SSRF guard checked, TLS is
+  verified against the host name, every redirect hop is validated, and size and time are capped. HTML is
+  reduced to text and returned as untrusted data.
+- CLI: `friday show tasks|notes|reminders|trash`, read-only and independent of the daemon.
+- Config: a `[tools]` section, and `security.fs_roots` (default `["~"]`, the whole user profile).
+  Writes outside the roots are T3.
+- A live-context line listing open tasks.
+
+### Changed
+- Tools act only on the paths the policy engine resolved and classified (`ToolContext.resolved_paths`),
+  so a path cannot change between approval and execution.
+- Tool output can set its own summarisation threshold (`summarize_over`), and a tool can declare that
+  its errors are untrusted (`errors_untrusted`, used by `web_fetch`).
+- The policy engine checks URLs syntactically before approval and does no DNS lookup. Name resolution
+  happens once, at fetch time, in the pinned connection.
+
+### Security
+- Critical locations (drive roots, the home folder, FRIDAY's own folders and anything that contains
+  one) can never be deleted or moved. The request is denied before any approval card is shown.
+- Paths are rejected before touching the disk when they are UNC, device, alternate-data-stream or
+  reserved-name paths. Risky suffixes (scripts, shortcuts, launchers) and persistence locations
+  (startup folders, shell profiles) are judged on the resolved path and need T3. Containment checks are
+  case-insensitive.
+- Rows written on a tainted turn (tasks, notes, reminders) are marked and later returned to the model as
+  untrusted data, so stored text cannot become an instruction.
+- The SSRF guard now judges IPv4 addresses hidden inside IPv6 (compatible, NAT64, SIIT, Teredo, 6to4)
+  and blocks site-local addresses.
+- Shell: batch files are refused, and a bare program name that resolves inside the working folder is
+  refused.
+- An independent adversarial review of this tranche produced fixes and a regression test for each
+  finding (`tests/test_review_fixes.py`).
+
+### Fixed
+- Reminder scheduling from a worker thread could stall the loop. It now hands off with
+  `call_soon_threadsafe`.
+
+### Known limits
+- Worker threads cannot be cancelled. Background children started by a shell command survive a normal exit.
+  ACLs and extended attributes are not preserved when a file is rewritten. The home folder is readable by
+  default; narrow `security.fs_roots` if that is too wide. The Windows-specific code is exercised by CI
+  but has had less manual testing than the Linux paths.
+
+### Tests
+- 288 tests (94 new), on Python 3.10 to 3.13.
 
 ## [0.1.1] - 2026-10-06
 
@@ -121,5 +226,7 @@ Runs on the Python standard library alone (3.10 to 3.13).
   rules are enforced in code. See `SECURITY.md` for the threat model and known limits.
 
 [Unreleased]: #unreleased
+[0.3.0]: #030---2026-10-06
+[0.2.0]: #020---2026-10-06
 [0.1.1]: #011---2026-10-06
 [0.1.0]: #010---2026-10-05

@@ -11,6 +11,7 @@ dropped so a stuck UI can never block the core. `publish_threadsafe` lets sensor
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import fnmatch
 import itertools
 import time
@@ -84,6 +85,11 @@ class EventBus:
 
     def on(self, pattern: str, callback: Callback) -> None:
         self._callbacks.append((pattern, callback))
+
+    def off(self, pattern: str, callback: Callback) -> None:
+        """Remove a callback registered with on(). Unknown ones are ignored."""
+        with contextlib.suppress(ValueError):
+            self._callbacks.remove((pattern, callback))
 
     def _remove(self, sub: Subscription) -> None:
         if sub in self._subs:

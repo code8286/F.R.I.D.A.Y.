@@ -52,6 +52,9 @@ class ContextBuilder:
         """Register a CODE-BUILT live context line (e.g. pending task count). Must not return untrusted text."""
         self._live.append((name, fn))
 
+    def remove_live_source(self, fn: LiveSource) -> None:
+        self._live = [(n, f) for (n, f) in self._live if f != fn]
+
     def set_recall(self, fn: RecallFn | None) -> None:
         self._recall = fn
 

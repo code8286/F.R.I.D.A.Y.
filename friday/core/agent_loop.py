@@ -303,7 +303,7 @@ class AgentLoop:
 
         if decision.gate is Gate.CONFIRM:
             try:
-                req = self.broker.create(session_id=session.id, tool=spec.name, args=args, decision=decision)
+                req = self.broker.create(session_id=session.id, tool=spec.name, args=args, decision=decision, origin=turn.source)
             except ConfirmationError as exc:
                 return fail(f"Could not request approval: {exc}")
             state = await self.broker.wait(req)
@@ -317,7 +317,7 @@ class AgentLoop:
                 return fail(f"Approval could not be used: {exc}")
             self.kill.check()
 
-        ctx = ToolContext(session.id, turn.turn_id, turn.source, tainted, self.services)
+        ctx = ToolContext(session.id, turn.turn_id, turn.source, tainted, self.services, decision.resolved_paths)
         timeout = spec.timeout_s or self.cfg.tool_timeout_s
         try:
             out = await asyncio.wait_for(self.registry.invoke(spec, ctx, args), timeout)
@@ -326,17 +326,25 @@ class AgentLoop:
             return fail(f"{spec.name} timed out after {timeout:.0f}s.")
         except ToolError as exc:
             self.audit.append("loop", "tool.failed", {"turn": turn.turn_id, "tool": spec.name, "error": self.redactor.text(str(exc))[:200]})
-            return fail(self.redactor.text(str(exc))[:1000])
+            return self._tool_error(spec, tu.id, self.redactor.text(str(exc))[:1000])
         except (KillSwitchTripped, asyncio.CancelledError):
             raise
         except Exception as exc:  # tool bug or environment error: report, never crash the loop
             msg = self.redactor.text(f"{type(exc).__name__}: {exc}")[:400]
             self.audit.append("loop", "tool.crashed", {"turn": turn.turn_id, "tool": spec.name, "error": msg})
-            return fail(f"{spec.name} failed: {msg}")
+            return self._tool_error(spec, tu.id, f"{spec.name} failed: {msg}")
 
-        return await self._shape_output(turn, spec.name, spec.output_trust, spec.summarize_output, out, tu.id)
+        return await self._shape_output(turn, spec.name, spec.output_trust, spec.summarize_output, out, tu.id, spec.summarize_over)
 
-    async def _shape_output(self, turn: TurnContext, name: str, spec_trust: Trust, summarize: bool, out: Any, tool_use_id: str) -> _Exec:
+    @staticmethod
+    def _tool_error(spec: Any, tool_use_id: str, msg: str) -> _Exec:
+        """A failed tool call. For tools whose errors can echo remote text, the message is data and taints the turn."""
+        if getattr(spec, "errors_untrusted", False):
+            return _Exec(ToolResultBlock(tool_use_id, wrap(msg, f"tool:{spec.name}:error", Trust.UNTRUSTED), True), untrusted=True)
+        return _Exec(ToolResultBlock(tool_use_id, msg, True))
+
+    async def _shape_output(self, turn: TurnContext, name: str, spec_trust: Trust, summarize: bool, out: Any, tool_use_id: str,
+                            summarize_over: int | None = None) -> _Exec:
         trust = spec_trust
         if out.untrusted is True:
             trust = Trust.UNTRUSTED
@@ -346,7 +354,7 @@ class AgentLoop:
 
         text = self.redactor.text(out.text)
         if trust is Trust.UNTRUSTED and self.summarizer is not None and (
-            summarize or len(text) > self.cfg.summarize_untrusted_over_chars
+            summarize or len(text) > (summarize_over or self.cfg.summarize_untrusted_over_chars)
         ):
             text = self.redactor.text(await self.summarizer.summarize(text, source, purpose=f"result of {name}"))
             source = f"{source}+summarised"

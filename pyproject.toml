@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "friday-assistant"
 dynamic = ["version"]
-description = "F.R.I.D.A.Y. — standalone 24x7 desktop assistant: headless core, security model and built-in memory (tranche 1)"
+description = "F.R.I.D.A.Y. — standalone 24x7 desktop assistant: headless core, security model, built-in memory, local tools and voice"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Alpha (code8286)" }]
 requires-python = ">=3.10"
-dependencies = []                       # tranche 1 runs on the standard library alone
+dependencies = []                       # the core runs on the standard library alone; keyring and voice are optional extras
 keywords = ["assistant", "agent", "llm", "desktop", "security"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -31,6 +31,12 @@ classifiers = [
 
 [project.optional-dependencies]
 secrets = ["keyring>=24"]               # OS keyring (Windows Credential Manager, macOS Keychain, Secret Service)
+voice = [                               # tranche 3: microphone, wake phrase, speech recognition (all optional, all local)
+    "sounddevice>=0.4.6",
+    "numpy>=1.24",
+    "vosk>=0.3.45",
+    "faster-whisper>=1.0",
+]
 
 [project.scripts]
 friday = "friday.__main__:main"

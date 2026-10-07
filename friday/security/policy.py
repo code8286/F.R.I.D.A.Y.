@@ -107,7 +107,7 @@ class PolicyEngine:
 
         for param in spec.url_params:
             for raw in _as_list(args.get(param)):
-                v = net_guard.check_url(raw, resolver=self._resolver, allow_private=self.cfg.allow_private_net)
+                v = net_guard.check_url(raw, resolver=self._resolver, allow_private=self.cfg.allow_private_net, resolve=False)
                 if not v.ok:
                     return self._deny(f"blocked URL in {param!r}: {v.reason}")
 
